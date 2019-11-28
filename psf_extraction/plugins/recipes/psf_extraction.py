@@ -29,7 +29,7 @@ class CombineBeadStacks(ModuleBase):
     
     inputName = Input('dummy')
     
-    files = List(File, ['', ''], 2)
+    files = List(File, ['', ''], 1)
     cache = File()
     
     outputName = Output('bead_images')
@@ -84,6 +84,11 @@ class Cleanup(ModuleBase):
     inputName = Input('input')
     outputName = Output('cleaned_image')
     
+    subtract_background = Bool(True)
+    background_percentile = Float(5)
+    background_smooth = List(Float, [5, 5], 1, 2)
+    output_background = Output('bg_image')
+    
     def execute(self, namespace):
         ims = namespace[self.inputName]
         mdh = ims.mdh
@@ -106,8 +111,16 @@ class Cleanup(ModuleBase):
         except Exception as e:
             print(e)
             
+        if self.subtract_background is True:
+            img = self.get_bg_removed_image(img, new_mdh, namespace)
+            
         namespace[self.outputName] = ImageStack(img, new_mdh)
         
+    def get_bg_removed_image(self, image, mdh, namespace):
+        bg = np.percentile(image, self.background_percentile, axis=(2,3))
+        bg = ndimage.gaussian_filter(bg, self.background_smooth)
+        namespace[self.output_background] = ImageStack(bg, mdh=mdh)
+        return np.clip(image - bg[:,:,None,None], 0, None)
 
 #@register_module('Binning')
 #class Binning(ModuleBase):
@@ -170,7 +183,23 @@ class DetectPSF(ModuleBase):
             if self.ignore_z:
                 blobs = np.insert(blobs, 2, ims.data.shape[2]//2, axis=1)
             else:
-                raise Exception("z centering not yet implemented")
+#                raise Exception("z centering not yet implemented")
+                blobs = np.insert(blobs, 2, 0, axis=1)                
+                for i, blob in enumerate(blobs):
+#                    print blob
+                    roi_half = np.ceil(1.5 * blob[3]).astype(int) #total roi = 3*sig
+#                    print(roi_half)
+#                    print(blob[0]-roi_half, blob[0]+roi_half)
+#                    print(blob[1]-roi_half, blob[1]+roi_half)
+                    z_flattened = ims.data[blob[0].astype(int)-roi_half:blob[0].astype(int)+roi_half, blob[1].astype(int)-roi_half:blob[1].astype(int)+roi_half, :, c].squeeze().mean(axis=(0,1))
+                    
+#                    print(z_flattened)
+                    z_com = np.average(np.arange(len(z_flattened)), axis=0, weights=z_flattened)
+                    z_com = np.round(z_com)
+#                    print(z_com)
+                    
+                    blobs[i,2] = z_com
+                    
             blobs = blobs.astype(np.int)
 #            print blobs
                 
@@ -219,6 +248,7 @@ class CropPSF(ModuleBase):
     half_roi_z = Int(60)
     
     output_images = Output('psf_cropped')
+    output_contact_sheet = Output('psf_cs')
     
     def execute(self, namespace):
         ims = namespace[self.inputName]
@@ -271,6 +301,8 @@ class CropPSF(ModuleBase):
             
         namespace[self.output_images] = ImageStack(data=res[:,:,:,mask], mdh=new_mdh)
         
+        namespace[self.output_contact_sheet] = ImageStack(data=make_contact_sheet(res[:,:,:,mask]), mdh=new_mdh, titleStub='CropPSF contact sheet')
+        
 @register_module('AlignPSF')
 class AlignPSF(ModuleBase):
     """
@@ -287,6 +319,9 @@ class AlignPSF(ModuleBase):
     output_cross_corr_images = Output('cross_cor_img')
     output_cross_corr_images_fitted = Output('cross_cor_img_fitted')
     output_images = Output('psf_aligned')
+    output_contact_sheet = Output('psf_aligned_cs')
+    
+    shift_padding = List(Int, [0,0,0], 3, 3)
     
     def execute(self, namespace):
         self._namespace = namespace
@@ -299,14 +334,18 @@ class AlignPSF(ModuleBase):
         cleaned_psf_stack = self.normalize_images(psf_stack[:,:,z_slice,:])
             
         if self.tukey > 0:
-            masks = [signal.tukey(dim_len, self.tukey) for dim_len in cleaned_psf_stack.shape[:3]]            
+            print (cleaned_psf_stack.shape[:3])
+            masks = [signal.tukey(dim_len, self.tukey) for dim_len in cleaned_psf_stack.shape[:3]]
+            print(len(masks))
             masks = np.product(np.meshgrid(*masks, indexing='ij'), axis=0)            
             cleaned_psf_stack *= masks[:,:,:,None]
             
-        drifts = self.calculate_shifts(cleaned_psf_stack, self.rcc_tolerance * 1E3 / ims.mdh['voxelsize.x'])
-#        print drifts        
+        drifts = self.calculate_shifts(cleaned_psf_stack, self.rcc_tolerance * 1E-3 / np.asarray([ims.mdh['voxelsize.x'], ims.mdh['voxelsize.y'], ims.mdh['voxelsize.z']]))
+        print drifts
         
-        namespace[self.output_images] = ImageStack(self.shift_images(cleaned_psf_stack if self.debug else psf_stack, drifts), mdh=ims.mdh)
+        shifted_images = self.shift_images(cleaned_psf_stack if self.debug else psf_stack, drifts)
+        namespace[self.output_images] = ImageStack(shifted_images, mdh=ims.mdh)
+        namespace[self.output_contact_sheet] = ImageStack(data=make_contact_sheet(shifted_images), mdh=ims.mdh, titleStub='AlignPSF contact sheet')
         
     def normalize_images(self, psf_stack):
         # in case it is already bg subtracted
@@ -412,13 +451,23 @@ class AlignPSF(ModuleBase):
         
         drifts = np.matmul(np.linalg.pinv(coefs), shifts)
         residuals = np.matmul(coefs, drifts) - shifts
-        residuals_dist = np.linalg.norm(residuals, axis=1)
+#        residuals_dist = np.linalg.norm(residuals, axis=1)
+#        
+##        shift_max = self.rcc_tolerance * 1E3 / mdh['voxelsize.x']
+#        shift_max = drift_tolerance
+#        # Sort and mask residual errors
+#        residuals_arg = np.argsort(-residuals_dist)        
+#        residuals_arg = residuals_arg[residuals_dist[residuals_arg] > shift_max]
         
-#        shift_max = self.rcc_tolerance * 1E3 / mdh['voxelsize.x']
-        shift_max = drift_tolerance
-        # Sort and mask residual errors
-        residuals_arg = np.argsort(-residuals_dist)        
-        residuals_arg = residuals_arg[residuals_dist[residuals_arg] > shift_max]
+        print('residuals')
+        print(residuals.shape)
+        residuals_normalized = residuals / drift_tolerance[None, :]
+        residuals_dist_normalized = np.linalg.norm(residuals_normalized, axis=1)
+        print(residuals_dist_normalized)
+        residuals_arg_normalized = np.argsort(-residuals_dist_normalized)        
+        residuals_arg_normalized = residuals_arg_normalized[residuals_dist_normalized[residuals_arg_normalized] > 1]
+        residuals_arg = residuals_arg_normalized
+        
 
         # Remove coefs rows
         # Descending from largest residuals to small
@@ -443,15 +492,18 @@ class AlignPSF(ModuleBase):
         
         psf_stack_mean = psf_stack / psf_stack.mean(axis=(0,1,2), keepdims=True)
         psf_stack_mean = psf_stack_mean.mean(axis=3)
-        psf_stack_mean *= psf_stack_mean > psf_stack_mean.max() * 0.5        
+        psf_stack_mean *= psf_stack_mean > psf_stack_mean.max() * 0.5
         center_offset = ndimage.center_of_mass(psf_stack_mean) - np.asarray(psf_stack_mean.shape)*0.5
-#        print(center_offset)
+        print(center_offset)
+#        print(ndimage.center_of_mass(psf_stack_mean))
+#        print(np.asarray(psf_stack_mean.shape)*0.5)
         
 #        print drifts.shape
 #        print stats.trim_mean(drifts, 0.25, axis=0)
 #        drifts = drifts - stats.trim_mean(drifts, 0.25, axis=0)
         
         drifts = drifts - center_offset
+        print drifts
                 
         if True:
             try:
@@ -487,6 +539,9 @@ class AlignPSF(ModuleBase):
         return drifts
     
     def shift_images(self, psf_stack, shifts):
+#        psf_stack = np.pad(psf_stack, np.stack((self.shift_padding,)*2, 1), 'wrap')
+        psf_stack = np.pad(psf_stack, np.vstack([np.stack((self.shift_padding,)*2, 1), [0,0]]), 'reflect')
+        
         kx = (np.fft.fftfreq(psf_stack.shape[0])) 
         ky = (np.fft.fftfreq(psf_stack.shape[1]))
         kz = (np.fft.fftfreq(psf_stack.shape[2]))
@@ -500,7 +555,7 @@ class AlignPSF(ModuleBase):
             shifted_images[:,:,:,i] = np.abs(np.fft.ifftn(ft_image*np.exp(-2j*np.pi*(kx*shift[0] + ky*shift[1] + kz*shift[2]))))
 #            shifted_images.append(shifted_image)
         
-        return shifted_images
+        return shifted_images[self.shift_padding[0]:shifted_images.shape[0]-self.shift_padding[0], self.shift_padding[1]:shifted_images.shape[1]-self.shift_padding[1], self.shift_padding[2]:shifted_images.shape[2]-self.shift_padding[2], :]
 #        namespace[self.output_images] = ImageStack(data=psf_stack, mdh=ims.mdh)
         
 def guassian_nd_error(p, dims, data):
@@ -591,12 +646,32 @@ class AveragePSF(ModuleBase):
         psf_raw_norm /= psf_raw_norm.max()
         
         residual_max = np.abs(psf_raw_norm - psf_raw_norm.mean(axis=3, keepdims=True)).max(axis=(0,1,2))
-        print(residual_max)
-        mask = residual_max < self.residual_threshold
-        print "images ignore: {}".format(np.argwhere(~mask)[:,0])
-        print mask
+        residual_mean = np.abs(psf_raw_norm - psf_raw_norm.mean(axis=3, keepdims=True)).mean(axis=(0,1,2))
+#        print(residual_max)
+#        print(residual_mean)
+        
+#        mask = residual_max < self.residual_threshold
+#        print "images ignore: {}".format(np.argwhere(~mask)[:,0])
+#        print mask
+        
+        # iterative masking - find most consistent PSF shape, not necessary the smallest...
+        # removes psf until max residual falls below threshold (i.e. mean psf is continually updated)
+        mask = np.ones(len(residual_max), dtype=bool)
+        while np.any(residual_max[mask] > self.residual_threshold) and sum(mask) > 2:
+            residual_max_masked = residual_max.copy()
+            residual_max_masked[~mask] = -1
+            max_index = np.argmax(residual_max_masked)
+#            print(residual_max)
+#            print(residual_max_masked)
+#            print(max_index)
+#            mask = mask & residual_max > self.residual_threshold
+            mask[max_index] = False
+            print("{} masked".format(sum(~mask)))
+            residual_max = np.abs(psf_raw_norm - psf_raw_norm[:,:,:,mask].mean(axis=3, keepdims=True)).max(axis=(0,1,2))
+            residual_mean = np.abs(psf_raw_norm - psf_raw_norm[:,:,:,mask].mean(axis=3, keepdims=True)).mean(axis=(0,1,2))
+        
         psf_raw_norm = psf_raw_norm[:,:,:,mask]
-        print(psf_raw_norm.shape)
+#        print(psf_raw_norm.shape)
         psf_raw_norm -= psf_raw_norm.min()
         psf_raw_norm /= psf_raw_norm.max()
         
@@ -652,9 +727,16 @@ class AveragePSF(ModuleBase):
             
             fig.tight_layout()
             
-            fig, ax = pyplot.subplots(1, 1, figsize=(4,3))
-            ax.hist(residual_max, bins=20)
-            ax.axvline(self.residual_threshold, color='red', ls='--')
+            fig, axes = pyplot.subplots(1, 2, figsize=(8,3))
+            axes[0].hist(residual_max, bins=np.linspace(0, residual_max.max(), 20))
+            axes[0].axvline(self.residual_threshold, color='red', ls='--')
+            axes[0].set_title('residual_max')
+            
+#            fig, ax = pyplot.subplots(1, 1, figsize=(4,3))
+            axes[1].hist(residual_mean, bins=np.linspace(0, residual_mean.max(), 20))
+#            ax.axvline(self.residual_threshold, color='red', ls='--')
+            axes[1].set_title('residual_mean')
+            fig.tight_layout()
 
 @register_module('InterpolatePSF')
 class InterpolatePSF(ModuleBase):
@@ -724,3 +806,13 @@ class InterpolatePSF(ModuleBase):
         mask = distance < 250.
         
         return X[mask], Y[mask], Z[mask], data[mask]
+    
+def make_contact_sheet(image):
+    n_col = 5
+    n_row = -(-image.shape[3] // n_col)
+    
+#    image.shape = image.shape[0], image.shape[1], image.shape[2], n_col*n_row
+    image = np.pad(image, [(0,0), (0,0), (0,0), (0, n_col*n_row - image.shape[3])], mode='constant')
+    image = np.concatenate([np.concatenate([image[:,:,:,n_col*k+i] for i in range(n_col)], axis=0) for k in range(n_row)], axis=1)
+    print(image.shape)
+    return image

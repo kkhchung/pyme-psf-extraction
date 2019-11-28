@@ -26,8 +26,13 @@ PYME module for PSF extraction
 
 * Use **InterpolatePSF** to resample PSF. Testing. Very slow.
 
+## To install:
+* Run the follow in the project folder. 
+    python setup.py develop
+
 ## To do's
 * Documentation
 * Change some of the parameters from pixel size to nanometer
 * Metadata
 * Label graphs
+* Add rebuilt recipe
