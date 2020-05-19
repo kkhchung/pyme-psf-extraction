@@ -13,6 +13,7 @@ from scipy import ndimage, optimize, signal, interpolate, stats
 from PYME.IO.image import ImageStack
 from PYME.IO.dataWrap import ListWrap
 from PYME.IO import MetaDataHandler
+from PYME.recipes.graphing import Plot
 
 from PYME.recipes import processing
 import time
@@ -156,7 +157,7 @@ class DetectPSF(ModuleBase):
     ignore_z = Bool(True)
     
     output_pos = Output('psf_pos')
-#    output_img = Output('output')
+    output_img = Output('psf_pos_image')
     
     def execute(self, namespace):
         ims = namespace[self.inputName]
@@ -208,20 +209,20 @@ class DetectPSF(ModuleBase):
             pos.append(blobs)
         namespace[self.output_pos] = pos
 
-        if True:
-            try:
-#                from matplotlib import pyplot
-                fig, axes = pyplot.subplots(1, counts, figsize=(4*counts, 3), squeeze=False)
-                for c in np.arange(counts):
-                    mean_project = ims.data[:,:,:,c].mean(2).squeeze()
-                    mean_project[mean_project==2**16-1] = 200
-                    axes[0, c].imshow(mean_project)
-                    axes[0, c].set_axis_off()
-                    for x, y, z, sig in pos[c]:
-                        cir = pyplot.Circle((y, x), sig, color='red', linewidth=2, fill=False)
-                        axes[0, c].add_patch(cir)
-            except Exception as e:
-                print e
+        def plot():
+            fig, axes = pyplot.subplots(1, counts, figsize=(4*counts, 3), squeeze=False)
+            for c in np.arange(counts):
+                mean_project = ims.data[:,:,:,c].mean(2).squeeze()
+                mean_project[mean_project==2**16-1] = 200
+                axes[0, c].imshow(mean_project.T, origin='lower')
+                axes[0, c].set_axis_off()
+                axes[0, c].invert_yaxis()
+                for x, y, z, sig in pos[c]:
+                    cir = pyplot.Circle((x, y), sig, color='red', linewidth=2, fill=False)
+                    axes[0, c].add_patch(cir)
+            return fig
+            
+        namespace[self.output_img] = Plot(plot)
                 
 #            overlay_image = np.zeros(mean_project.shape, dtype=bool)
 #            for x, y, sig in blobs:
@@ -250,7 +251,8 @@ class CropPSF(ModuleBase):
     half_roi_z = Int(60)
     
     output_images = Output('psf_cropped')
-    output_contact_sheet = Output('psf_cs')
+    output_contact_sheet = Output('psf_cropped_cs')
+    output_raw_contact_sheet = Output('psf_cropped_all_cs')
     
     def execute(self, namespace):
         ims = namespace[self.inputName]
@@ -305,6 +307,21 @@ class CropPSF(ModuleBase):
         
         namespace[self.output_contact_sheet] = ImageStack(data=make_contact_sheet(res[:,:,:,mask]), mdh=new_mdh, titleStub='CropPSF contact sheet')
         
+        def plot():
+            n_col = min(5, res.shape[3])
+            n_row = -(-res.shape[3] // n_col)
+            fig, axes = pyplot.subplots(n_row, n_col, figsize=(2*n_col, 2*n_row))
+            axes_flat = axes.flatten()
+            for i in np.arange(res.shape[3]):
+                axes_flat[i].imshow(res[:,:,:,i].mean(2), cmap='gray')
+                cir = pyplot.Circle((0.90, 0.90), 0.05, fc='green' if mask[i] else 'red', transform=axes_flat[i].transAxes)
+                axes_flat[i].add_patch(cir)                
+                axes_flat[i].set_axis_off()
+            fig.tight_layout()
+            return fig
+        
+        namespace[self.output_raw_contact_sheet] = Plot(plot)
+        
 @register_module('AlignPSF')
 class AlignPSF(ModuleBase):
     """
@@ -322,6 +339,7 @@ class AlignPSF(ModuleBase):
     output_cross_corr_images_fitted = Output('cross_cor_img_fitted')
     output_images = Output('psf_aligned')
     output_contact_sheet = Output('psf_aligned_cs')
+    output_info_plot = Output('psf_aligned_info')
     
     shift_padding = List(Int, [0,0,0], 3, 3)
     
@@ -507,35 +525,25 @@ class AlignPSF(ModuleBase):
         drifts = drifts - center_offset
         print drifts
                 
-        if True:
-            try:
-#                from matplotlib import pyplot
-                fig, axes = pyplot.subplots(1, 2, figsize=(6,3))
-#                new_residuals = np.matmul(coefs, drifts) - shifts
-#                new_residuals_dist = np.linalg.norm(new_residuals, axis=1)
-#                # print new_residuals_dist
-#                pyplot.hist(new_residuals_dist[coefs.any(axis=1)], 100)
-#                print drifts                
-#                limits = np.max(np.abs(drifts), axis=0)
-                
-                axes[0].scatter(drifts[:,0], drifts[:,1], s=50)
-#                axes[0].set_xlim(-limits[0], limits[0])
-#                axes[0].set_ylim(-limits[1], limits[1])
-                axes[0].set_xlabel('x')
-                axes[0].set_ylabel('y')                
-                axes[1].scatter(drifts[:,0], drifts[:,2], s=50)
-                axes[1].set_xlabel('x')
-                axes[1].set_ylabel('z')
-                
-                for ax in axes:
-#                    ax.set_xlim(-1, 1)
-#                    ax.set_ylim(-1, 1)
-                    ax.axvline(0, color='red', ls='--')
-                    ax.axhline(0, color='red', ls='--')                    
-                
-                fig.tight_layout()
-            except Exception as e:
-                print e
+        def plot_info():
+            fig, axes = pyplot.subplots(1, 2, figsize=(6,3))
+            
+            axes[0].scatter(drifts[:,0], drifts[:,1], s=50)
+            axes[0].set_xlabel('x')
+            axes[0].set_ylabel('y')                
+            axes[1].scatter(drifts[:,0], drifts[:,2], s=50)
+            axes[1].set_xlabel('x')
+            axes[1].set_ylabel('z')
+            
+            for ax in axes:
+                ax.axvline(0, color='red', ls='--')
+                ax.axhline(0, color='red', ls='--')                    
+            
+            fig.tight_layout()
+            
+            return fig
+            
+        self._namespace[self.output_info_plot] = Plot(plot_info)
             
             
         return drifts
@@ -634,6 +642,8 @@ class AveragePSF(ModuleBase):
     gaussian_filter = List(Float, [0, 0, 0], 3, 3)
     residual_threshold = Float(0.1)
     output_images = Output('psf_combined')
+    output_raw_contact_sheet = Output('psf_combined_all_cs')
+    output_info_plot = Output('psf_combined_info_plot')
     
     def execute(self, namespace):        
         ims = namespace[self.inputName]
@@ -672,12 +682,13 @@ class AveragePSF(ModuleBase):
             residual_max = np.abs(psf_raw_norm - psf_raw_norm[:,:,:,mask].mean(axis=3, keepdims=True)).max(axis=(0,1,2))
             residual_mean = np.abs(psf_raw_norm - psf_raw_norm[:,:,:,mask].mean(axis=3, keepdims=True)).mean(axis=(0,1,2))
         
-        psf_raw_norm = psf_raw_norm[:,:,:,mask]
+        psf_masked_norm = psf_raw_norm[:,:,:,mask]
+#        del psf_raw_norm
 #        print(psf_raw_norm.shape)
-        psf_raw_norm -= psf_raw_norm.min()
-        psf_raw_norm /= psf_raw_norm.max()
+        psf_masked_norm -= psf_masked_norm.min()
+        psf_masked_norm /= psf_masked_norm.max()
         
-        psf_var = psf_raw_norm.var(axis=3)  
+        psf_var = psf_masked_norm.var(axis=3)  
         
 #        psf_var_norm = psf_var / psf_combined.mean(axis=3)
         namespace[self.output_var_image] = ImageStack(psf_var, mdh=ims.mdh)
@@ -685,9 +696,9 @@ class AveragePSF(ModuleBase):
         
         # if requested not to normalize, revert back to original data
         if not self.normalize_intensity:
-            psf_raw_norm = psf_raw.copy()[:,:,:,mask]
+            psf_masked_norm = psf_raw.copy()[:,:,:,mask]
         
-        psf_combined = psf_raw_norm.mean(axis=3)
+        psf_combined = psf_masked_norm.mean(axis=3)
         psf_combined -= psf_combined.min()
         psf_combined /= psf_combined.max()
         
@@ -712,33 +723,55 @@ class AveragePSF(ModuleBase):
             print(e)
         namespace[self.output_images] = ImageStack(psf_processed, mdh=new_mdh)
         
-        if True:
-            fig, axes = pyplot.subplots(2, 3, figsize=(9,6))
-            axes[0,0].set_title('X')
-            axes[0,0].plot(psf_raw_norm[:, psf_raw_norm.shape[1]//2, psf_raw_norm.shape[2]//2, :])
+        def plot_info():
+            fig, axes = pyplot.subplots(3, 3, figsize=(9,9))
+            [axes[0,i].set_title('Individual') for i in range(3)]
+            [axes[1,i].set_title('Combined') for i in range(3)]
+            [axes[i,0].set_xlabel('X') for i in range(2)]
+            axes[0,0].plot(psf_masked_norm[:, psf_masked_norm.shape[1]//2, psf_masked_norm.shape[2]//2, :])
             axes[1,0].plot(psf_combined[:, psf_combined.shape[1]//2, psf_combined.shape[2]//2], lw=1, color='red')
             axes[1,0].plot(psf_processed[:, psf_processed.shape[1]//2, psf_processed.shape[2]//2], lw=1, ls='--', color='black')
-            axes[0,1].set_title('Y')
-            axes[0,1].plot(psf_raw_norm[psf_raw_norm.shape[0]//2, :, psf_raw_norm.shape[2]//2, :])
+            [axes[i,1].set_xlabel('Y') for i in range(2)]
+            axes[0,1].plot(psf_masked_norm[psf_masked_norm.shape[0]//2, :, psf_masked_norm.shape[2]//2, :])
             axes[1,1].plot(psf_combined[psf_combined.shape[0]//2, :, psf_combined.shape[2]//2], lw=1, color='red')
             axes[1,1].plot(psf_processed[psf_processed.shape[0]//2, :, psf_processed.shape[2]//2], lw=1, ls='--', color='black')
-            axes[0,2].set_title('Z')
-            axes[0,2].plot(psf_raw_norm[psf_raw_norm.shape[0]//2, psf_raw_norm.shape[1]//2, :, :])
+            [axes[i,2].set_xlabel('Z') for i in range(2)]
+            axes[0,2].plot(psf_masked_norm[psf_masked_norm.shape[0]//2, psf_masked_norm.shape[1]//2, :, :])
             axes[1,2].plot(psf_combined[psf_combined.shape[0]//2, psf_combined.shape[1]//2, :], lw=1, color='red')
             axes[1,2].plot(psf_processed[psf_processed.shape[0]//2, psf_processed.shape[1]//2, :], lw=1, ls='--', color='black')
+            [axes[i,j].set_ylim(0,1) for i in range(2) for j in range(3)]
+
+            axes[2,0].hist(residual_max, bins=np.linspace(0, residual_max.max(), 20))
+            axes[2,0].axvline(self.residual_threshold, color='red', ls='--')
+            axes[2,0].set_xlabel('max residual')
+            axes[2,0].set_ylabel('counts')
             
-            fig.tight_layout()
-            
-            fig, axes = pyplot.subplots(1, 2, figsize=(8,3))
-            axes[0].hist(residual_max, bins=np.linspace(0, residual_max.max(), 20))
-            axes[0].axvline(self.residual_threshold, color='red', ls='--')
-            axes[0].set_title('residual_max')
+            axes[2,1].axis('off')
+            axes[2,2].axis('off')
             
 #            fig, ax = pyplot.subplots(1, 1, figsize=(4,3))
-            axes[1].hist(residual_mean, bins=np.linspace(0, residual_mean.max(), 20))
+#            axes[1].hist(residual_mean, bins=np.linspace(0, residual_mean.max(), 20))
 #            ax.axvline(self.residual_threshold, color='red', ls='--')
-            axes[1].set_title('residual_mean')
+#            axes[1].set_title('residual_mean')
             fig.tight_layout()
+            return fig
+            
+        namespace[self.output_info_plot] = Plot(plot_info)
+            
+        def plot_contact_sheet():
+            n_col = min(5, psf_raw_norm.shape[3])
+            n_row = -(-psf_raw_norm.shape[3] // n_col)
+            fig, axes = pyplot.subplots(n_row, n_col, figsize=(2*n_col, 2*n_row))
+            axes_flat = axes.flatten()
+            for i in np.arange(psf_raw_norm.shape[3]):
+                axes_flat[i].imshow(psf_raw_norm[:,:,:,i].mean(2), cmap='gray')
+                cir = pyplot.Circle((0.90, 0.90), 0.05, fc='green' if mask[i] else 'red', transform=axes_flat[i].transAxes)
+                axes_flat[i].add_patch(cir)                
+                axes_flat[i].set_axis_off()
+            fig.tight_layout()
+            return fig
+        
+        namespace[self.output_raw_contact_sheet] = Plot(plot_contact_sheet)
 
 @register_module('InterpolatePSF')
 class InterpolatePSF(ModuleBase):
