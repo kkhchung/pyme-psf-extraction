@@ -94,6 +94,8 @@ class Cleanup(ModuleBase):
         mdh = ims.mdh
         
         img = ims.data[:,:,:,:]
+        img = np.copy (img)
+        img.shape += (1,) * (4 - img.ndim)
         img[img==2**16-1] = 0
               
         np.clip(img, mdh.Camera.ADOffset, None, img)
@@ -191,7 +193,7 @@ class DetectPSF(ModuleBase):
 #                    print(roi_half)
 #                    print(blob[0]-roi_half, blob[0]+roi_half)
 #                    print(blob[1]-roi_half, blob[1]+roi_half)
-                    z_flattened = ims.data[blob[0].astype(int)-roi_half:blob[0].astype(int)+roi_half, blob[1].astype(int)-roi_half:blob[1].astype(int)+roi_half, :, c].squeeze().mean(axis=(0,1))
+                    z_flattened = ims.data[blob[0].astype(int)-roi_half:blob[0].astype(int)+roi_half, blob[1].astype(int)-roi_half:blob[1].astype(int)+roi_half, :, c].squeeze().max(axis=(0,1))
                     
 #                    print(z_flattened)
                     z_com = np.average(np.arange(len(z_flattened)), axis=0, weights=z_flattened)
@@ -809,6 +811,7 @@ class InterpolatePSF(ModuleBase):
     
 def make_contact_sheet(image):
     n_col = 5
+    n_col = min(n_col, image.shape[3])
     n_row = -(-image.shape[3] // n_col)
     
 #    image.shape = image.shape[0], image.shape[1], image.shape[2], n_col*n_row
