@@ -1,0 +1,39 @@
+- psf_extraction.Cleanup:
+    inputName: input
+    outputName: cleaned_image
+    output_background: bg_image
+    subtract_background: false
+- psf_extraction.DetectPSF:
+    exclude_border: 30
+    ignore_z: false
+    inputName: cleaned_image
+    output_pos: psf_pos
+- psf_extraction.CropPSF:
+    half_roi_x: 30
+    half_roi_y: 30
+    half_roi_z: 40
+    inputName: cleaned_image
+    input_pos: psf_pos
+    output_contact_sheet: psf_cs
+    output_images: psf_cropped
+- psf_extraction.AlignPSF:
+    inputName: psf_cropped
+    normalize_z: false
+    output_contact_sheet: psf_aligned_cs
+    output_cross_corr_images: cross_cor_img
+    output_cross_corr_images_fitted: cross_cor_img_fitted
+    output_images: psf_aligned
+    shift_padding:
+    - 5
+    - 5
+    - 5
+    z_crop_half_roi: 30
+- psf_extraction.AveragePSF:
+    gaussian_filter:
+    - 0.2
+    - 0.2
+    - 0.2
+    inputName: psf_aligned
+    normalize_intensity: true
+    output_images: psf_combined
+    output_var_image: psf_var
