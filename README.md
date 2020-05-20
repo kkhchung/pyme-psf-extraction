@@ -7,10 +7,10 @@ Some capability for rejecting bad bead PSFs are provided. Deconvolution not part
 ## System requirements
 * Windows, Linux or OS X
 * Python 2.7
-* PYME (>19.02.27) and dependencies
+* PYME (>) and dependencies
 
   
-- Tested on Windows 10 with PYME (19.02.27)
+- Tested on Windows 10 with PYME ()
 ## Installation
 
 1. Clone repository.
