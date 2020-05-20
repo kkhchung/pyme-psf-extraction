@@ -1,38 +1,49 @@
 # pyme-psf-extraction
-PYME module for PSF extraction
+A bead PSF extraction recipe module written for [PYME](https://python-microscopy.org/).
 
-* PSF detected with Difference of Gaussian method from `skimage.feature.blob_dog`.
-* PSF detection can be tuned with parameters in the **DetectPSF** module. In addition, additional filters are available to reject bad PSFs.
-    * **CropPSF** can reject ROI with multiple peaks or if the ROI center of mass deviates from its geometric center.
-	* **CropPSF** also allows manual rejection.
-	* **AlignPSF** will reject a poor cross correlation, although not a ROI.
-	* **AveragePSF** will calculate maximum error/residual of ROIs against the averaged PSF and can be filtered out.
-* PSFs are aligned using (redundant) cross-correlation. All pairs of PSFs are compared.
-* Various graphs output are provided for debugging. Rough and not labeled.
-    * **DetectPSF** shows the flatten bead stacks with the detected PSF marked by a circle.
-    * **AlignPSF** shows the measured offsets in x, y, and z.
-	* **AveragePSF** shows a histogram of max error/residual and the threshold used.
-	* **AveragePSF** shows cross-sections of the individual PSF stacks, useful for checking for alignment or outliers issues. The averaged PSF before (*in red*) and after (*in black*) smoothing is also displayed.
+Designed to crop, align and average bead PSFs.
+Some capability for rejecting bad bead PSFs are provided. Deconvolution not part of this module but is available in PYME.
 
-## Usage
-* Use **CombineBeadStacks** to combine multiple bead stacks for analysis. Currently the only way to combine PSF extracted from different files.
+## System requirements
+* Windows, Linux or OS X
+* Python 2.7
+* PYME (>) and dependencies
 
-* Typically to extract PSF, chain these modules in order:
-    1. **Cleanup**
-	2. **DetectPSF**
-	3. **CropPSF**
-	4. **AlignPSF**
-	5. **AveragePSF**
+  
+- Tested on Windows 10 with PYME ()
+## Installation
 
-* Use **InterpolatePSF** to resample PSF. Testing. Very slow.
+1. Clone repository.
+2. Run the following in the project folder. 
+	```
+		python setup.py develop
+	```
+3. Start `hd5view` (PYME).
 
-## To install:
-* Run the follow in the project folder. 
-    python setup.py develop
+(Runtime < 5 min)
+
+## Demo
+1. Open this simulated image of beads ([beads_simulated.h5](/psf_extraction/example/beads_simulated.h5)) with `dh5view` (PYME).
+2. Load and run this demo recipe ([bead_psf_extraction.yaml](/psf_extraction/example/bead_psf_extraction.yaml)).
+3. Open the extracted PSF by clicking the output (default: `psf_combined`) on the final **AveragePSF** module.
+
+(Runtime < 5 min)
+
+## Instructions
+1. Refer to [PYME documention](https://python-microscopy.org/doc/index.html) for general use of PYME.
+2. Open image file with `dh5view` (PYME).
+3. Chain the modules in this order:
+	1. **CombineBeadStacks** (optional)
+	2. **Cleanup**
+	3. **DetectPSF**
+	4. **CropPSF**
+	5. **AlignPSF**
+	6. **AveragePSF**
+	
+	Detailed description of each module and their inputs, outputs and parameters are accessible in PYME.
+4. Run recipe.
+5. Click on the extracted PSF output from **AveragePSF** and save as necessary.
 
 ## To do's
-* Documentation
 * Change some of the parameters from pixel size to nanometer
-* Metadata
-* Label graphs
-* Add rebuilt recipe
+* Add more metadata
