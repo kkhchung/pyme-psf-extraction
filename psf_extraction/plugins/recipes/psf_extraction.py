@@ -24,8 +24,27 @@ from matplotlib import pyplot
 @register_module('CombineBeadStacks')
 class CombineBeadStacks(ModuleBase):
     """
-        Combine multiply bead stacks in the 4th dimension.
-        X, Y, Z must be identical.
+    Combine bead stack images from separate files.
+    Assumes metadata and X, Y, Z dimensions are identical.
+        
+    Inputs
+    ------
+    
+    inputName : None
+        Dummy input. Not used.
+    
+    Outputs
+    -------
+    outputName : ImageStack
+        Combined image.
+    
+    Parameters
+    ----------
+    files : List of strings
+        Source image file paths.
+    
+    cache : File
+        Optional cache file path.
     """
     
     inputName = Input('dummy')
@@ -76,10 +95,31 @@ class CombineBeadStacks(ModuleBase):
 @register_module('Cleanup')
 class Cleanup(ModuleBase):
     """
-        Currently includes some steps for data collected from Leica SMS (Kevin).
+    Basic cleanup. Subtracts camera AD offset and removes hot pixels stuck at maximum for a at 16-bit camera.
+    
+    Optional background subtraction.
         
-        * Removed hot pixel
-        * Subtract AD offset
+    Inputs
+    ------
+    
+    inputName : ImageStack
+        Bead stack image.
+    
+    Outputs
+    -------
+    outputName : ImageStack
+        Processed image.
+    output_background : ImageStack
+        The calculated background image.
+    
+    Parameters
+    ----------
+    subtract_background : Bool
+        Enable background subtraction.
+    background_percentile : float
+        Percentile along z axis to estimate background.
+    background_smooth : float
+        Sigma of the Gaussian blur applied to the xy background image.
     """
     
     inputName = Input('input')
@@ -141,15 +181,44 @@ class Cleanup(ModuleBase):
 @register_module('DetectPSF')
 class DetectPSF(ModuleBase):
     """
-        Detect PSF based on diff of gaussian
-        Image dims in X, Y, Z, C where C are processed independently.
-        Returns list of (X, Y, Z) per C
+    Detect PSFs based on diff of Difference of Gaussian (``skimage.feature.blob_dog``)
+
+        
+    Inputs
+    ------
+    
+    inputName : ImageStack
+        Bead stack image.
+    
+    Outputs
+    -------
+    output_pos : array_like
+        Position of detected PSFs.
+    output_img : Plot
+        Visual display of the  positions of detected PSFs.
+    
+    Parameters
+    ----------
+    min_sigma : float
+        In nanometers. Passed to ``blob_dog`` as ``min_sigma``.
+    max_sigma : float
+        In nanometers. Passed to ``blob_dog`` as ``max_sigma``.
+    sigma_ratio : float
+        Passed to ``blob_dog`` as ``sigma_ratio``.
+    percent_threshold : float
+        Multipled to image maximum intensity and passed to ``blob_dog`` as ``threshold``.
+    overlap : float
+        Passed to ``blob_dog`` as ``overlap``.
+    exclude_border : int
+        Ignore beads that are within this many pixels to the edge of the image.
+    ignore_z : Bool
+        Do not attempt to determine the z position of beads.
     """
     
     inputName = Input('input')
     
-    min_sigma = Float(1.0)
-    max_sigma = Float(3.0)
+    min_sigma = Float(1000.0)
+    max_sigma = Float(3000.0)
     sigma_ratio = Float(1.6)
     percent_threshold = Float(0.1)
     overlap = Float(0.5)
@@ -162,7 +231,7 @@ class DetectPSF(ModuleBase):
     def execute(self, namespace):
         ims = namespace[self.inputName]
         
-        pixel_size = ims.mdh['voxelsize.x']
+        pixel_size = ims.mdh['voxelsize.x'] * 1e3
         
         pos = list()
         counts = ims.data.shape[3]
@@ -232,11 +301,41 @@ class DetectPSF(ModuleBase):
 @register_module('CropPSF')
 class CropPSF(ModuleBase):
     """
-        Crops out PSF based on positions given.
-        Built-in filter by flattened index.
-        Built-in filter for removing multiple peaked data.
-        Filters work on flatten X, Y images
-        Stacked in the 4 dimension
+        Crop out PSFs based on the provided positions.
+        Built-in filter for rejecting PSFs with off-centered peak or multiple peaks.
+        
+    Inputs
+    ------    
+    inputName : ImageStack
+        Bead stack image.
+    input_pos : array_like
+        Position of detected PSFs.
+    
+    Outputs
+    -------
+    output_images : ImageStack
+        Cropped out PSF images.
+    output_contact_sheet : ImageStack
+        Cropped out bead PSF images tiled for manual inspection.
+    output_raw_contact_sheet : Plot
+        Overview showing flattened bead PSFs. Accepted PSFs are marked by green circle whereas rejected PSFs by a red circle.
+    
+    Parameters
+    ----------
+    ignore_pos : List of int
+        Indices of the PSFs rejected.
+    threshold_reject : float
+        Percentage threshold for peak detection.
+    com_reject : float
+        Threshold for maximum deviation of peak center of mass from image center.
+    half_roi_x : int
+        In pixels. Half-length of cropped PSF in x.
+    half_roi_y : int
+        In pixels. Half-length of cropped PSF in y.
+    half_roi_z : int
+        In pixels. Half-length of cropped PSF in z.
+    ignore_z : Bool
+        Do not attempt to determine the z position of beads.
     """
     
     inputName = Input('input')
@@ -325,7 +424,41 @@ class CropPSF(ModuleBase):
 @register_module('AlignPSF')
 class AlignPSF(ModuleBase):
     """
-        Align PSF stacks by redundant cross correlation.
+    Align bead PSF stacks by redundant cross correlation (RCC).
+
+        
+    Inputs
+    ------    
+    inputName : ImageStack
+        Bead PSFs image.
+    
+    Outputs
+    -------
+    output_cross_corr_images : ImageStack
+        Thresholded cross-correlation images. For troubleshooting.
+    output_cross_corr_images_fitted : ImageStack
+        Fitted cross-correlation images. For troubleshooting.
+    output_images : ImageStack
+        Aligned bead PSFs image.
+    output_contact_sheet : ImageStack
+        Aligned bead PSFs tiled for manual inspection.
+    output_info_plot : Plot
+        Plot showing the calculated offsets.
+    
+    Parameters
+    ----------
+    normalize_z : Bool
+        Enable to normalize intensity per plane rather than whole volume.
+    tukey : float
+        Parameter for Tukey window (``scipy.signal.tukey``) applied to the images pre-cross correlation.
+    rcc_tolerance : float
+        In nanometers. Threshold for RCC.
+    z_crop_half_roi : int
+        In pixels. Half-length in z of the ROI used for alignment.
+    peak_detect : string
+        Peak finding with either with Gaussian or radial basis function.
+    debug : int
+        If enabled, ``output_images`` returns the ROI used for alignment rather than the complete z stack.
     """
     
     inputName = Input('psf_cropped')
@@ -629,18 +762,42 @@ def rbf_nd(rbf_interpolator, dims):
 @register_module('AveragePSF')
 class AveragePSF(ModuleBase):
     """
-        Input stacks of PSF and return the (normalized) average PSF.
-        Additional filter based on max error/residual between image and averaged image.
+    Returns an averaged PSF stack after filtering out PSFs that deviate too much from the average.
+        
+    Inputs
+    ------    
+    inputName : ImageStack
+        Bead PSFs image.
+    
+    Outputs
+    -------
+    output_var_image : ImageStack
+        Variance of bead PSFs image. For trouble shooting.
+    output_images : ImageStack
+        Averaged bead PSF image.
+    output_raw_contact_sheet : Plot
+        Overview showing flattened bead PSFs. Accepted PSFs are marked by green circle whereas rejected PSFs by a red circle.
+    output_info_plot : ImageStack
+        Plot of bead PSFs profiles and histogram of maximum residuals/errors.
+    
+    Parameters
+    ----------
+    normalize_intensity : Bool
+        Enable to normalize bead PSF images before combining.
+    gaussian_filter : List of float
+        In pixels. Sigma of the Gaussian filter applied to the averaged bead PSF image.
+    residual_threshold : float
+        Between 0 to 1. Threshold for maximum residual/error between individual bead PSFs and the averaged bead PSF.
     """
     
     inputName = Input('psf_aligned')
     normalize_intensity = Bool(False)
 #    normalize_z = Bool(False)
-    output_var_image = Output('psf_var')
 #    smoothing_method = Enum(['RBF', 'Gaussian'])
 #    output_var_image_norm = Output('psf_var_norm')
     gaussian_filter = List(Float, [0, 0, 0], 3, 3)
     residual_threshold = Float(0.1)
+    output_var_image = Output('psf_var')
     output_images = Output('psf_combined')
     output_raw_contact_sheet = Output('psf_combined_all_cs')
     output_info_plot = Output('psf_combined_info_plot')
@@ -776,9 +933,11 @@ class AveragePSF(ModuleBase):
 @register_module('InterpolatePSF')
 class InterpolatePSF(ModuleBase):
     """
-        Interpolate PSF with RBF.
-        Very stupid. Very slow. Performed on local pixels and combine by tiling.
-        Only uses the first color channel
+    TESTING ONLY. DON'T USE.
+    
+    
+    Interpolate PSF with RBF. Very stupid. Very slow. Performed on local pixels and combine by tiling.
+    Only uses the first color channel.
     """
     
     inputName = Input('input')
