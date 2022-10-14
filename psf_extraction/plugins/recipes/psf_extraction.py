@@ -11,7 +11,7 @@ from PYME.recipes.traits import Input, Output, Float, Enum, CStr, Bool, Int, Lis
 import numpy as np
 from scipy import ndimage, optimize, signal, interpolate, stats
 from PYME.IO.image import ImageStack
-from PYME.IO.dataWrap import ListWrap
+#from PYME.IO.dataWrap import ListWrap
 from PYME.IO import MetaDataHandler
 from PYME.recipes.graphing import Plot
 
@@ -47,7 +47,7 @@ class CombineBeadStacks(ModuleBase):
         Optional cache file path.
     """
     
-    inputName = Input('dummy')
+    inputName = Input('input')
     
     files = List(File, ['', ''], 1)
     cache = File()
@@ -145,9 +145,7 @@ class Cleanup(ModuleBase):
         new_mdh = None
         try:
             new_mdh = MetaDataHandler.NestedClassMDHandler(mdh)
-            print "here"
             if not 'voxelsize.z' in new_mdh.keys() or np.allclose(new_mdh['voxelsize.z'], 0):
-                print 'there'
                 new_mdh['voxelsize.z'] = new_mdh['StackSettings.StepSize']
             if not "PSFExtraction.SourceFilenames" in new_mdh.keys():
                 new_mdh["PSFExtraction.SourceFilenames"] = ims.filename
@@ -390,7 +388,7 @@ class CropPSF(ModuleBase):
 
         # To do: add metadata
 #        mdh['ImageType=']='PSF'        
-        print "images ignore: {}".format(self.ignore_pos)
+        print("images ignore: {}".format(self.ignore_pos))
         mask[self.ignore_pos] = False
         
         new_mdh = None
@@ -494,7 +492,7 @@ class AlignPSF(ModuleBase):
             cleaned_psf_stack *= masks[:,:,:,None]
             
         drifts = self.calculate_shifts(cleaned_psf_stack, self.rcc_tolerance * 1E-3 / np.asarray([ims.mdh['voxelsize.x'], ims.mdh['voxelsize.y'], ims.mdh['voxelsize.z']]))
-        print drifts
+        print(drifts)
         
         shifted_images = self.shift_images(cleaned_psf_stack if self.debug else psf_stack, drifts)
         namespace[self.output_images] = ImageStack(shifted_images, mdh=ims.mdh)
@@ -521,7 +519,7 @@ class AlignPSF(ModuleBase):
 
     def calculate_shifts(self, psf_stack, drift_tolerance):
         n_steps = psf_stack.shape[3]
-        coefs_size = n_steps * (n_steps-1) / 2
+        coefs_size = int(n_steps * (n_steps-1) / 2)
         coefs = np.zeros((coefs_size, n_steps-1))
         shifts = np.zeros((coefs_size, 3))
         
@@ -533,7 +531,7 @@ class AlignPSF(ModuleBase):
             for j in np.arange(i+1, n_steps):
                 coefs[counter, i:j] = 1
                 
-                print "compare {} to {}".format(i, j)
+                print("compare {} to {}".format(i, j))
                 correlate_result = signal.correlate(psf_stack[:,:,:,i], psf_stack[:,:,:,j], mode="same")
                 correlate_result -= correlate_result.min()
                 correlate_result /= correlate_result.max()
@@ -656,7 +654,7 @@ class AlignPSF(ModuleBase):
 #        drifts = drifts - stats.trim_mean(drifts, 0.25, axis=0)
         
         drifts = drifts - center_offset
-        print drifts
+        print(drifts)
                 
         def plot_info():
             fig, axes = pyplot.subplots(1, 2, figsize=(6,3))
